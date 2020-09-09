@@ -22,6 +22,8 @@ module dls.protocol.messages.text_document;
 
 import dls.protocol.definitions;
 import dls.protocol.interfaces.text_document;
+import dls.util.debounce;
+import core.time : Duration;
 import std.json : JSONValue;
 import std.typecons : Nullable;
 
@@ -67,6 +69,8 @@ void didChange(DidChangeTextDocumentParams params)
     if (!Document.change(params.textDocument, params.contentChanges))
     {
         logger.warning("Document %s is not open", uri.path);
+    } else {
+        scanDocument(params.textDocument);
     }
 }
 
@@ -327,17 +331,32 @@ private bool scanOnWillSave(bool will)
     return memoize!impl();
 }
 
+Timer timeout;
 private void scanDocument(const TextDocumentIdentifier textDocument)
 {
-    import dls.protocol.interfaces : PublishDiagnosticsParams;
-    import dls.protocol.jsonrpc : send;
-    import dls.protocol.logger : logger;
-    import dls.protocol.messages.methods : TextDocument;
-    import dls.tools.analysis_tool : AnalysisTool;
-    import dls.util.uri : Uri;
+    void delegate () later = {
+        if (timeout !is null)
+            timeout.cancel ();
+    };
+    const auto callNow = timeout !is null;
 
-    auto uri = new Uri(textDocument.uri);
-    logger.info("Document saved: %s", uri.path);
-    send(TextDocument.publishDiagnostics, new PublishDiagnosticsParams(uri,
-            AnalysisTool.instance.diagnostics(uri)));
+    if (timeout !is null)
+        timeout.cancel ();
+
+    timeout = new Timer (200.msecs, later);
+    timeout.start ();
+
+    if (callNow) {
+        import dls.protocol.interfaces : PublishDiagnosticsParams;
+        import dls.protocol.jsonrpc : send;
+        import dls.protocol.logger : logger;
+        import dls.protocol.messages.methods : TextDocument;
+        import dls.tools.analysis_tool : AnalysisTool;
+        import dls.util.uri : Uri;
+
+        auto uri = new Uri(textDocument.uri);
+        logger.info("Document saved: %s", uri.path);
+        send(TextDocument.publishDiagnostics, new PublishDiagnosticsParams(uri,
+                AnalysisTool.instance.diagnostics(uri)));
+    }
 }
